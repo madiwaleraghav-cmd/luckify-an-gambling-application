@@ -17,7 +17,8 @@ export async function POST(req: Request) {
         }
 
         const userId = session.userId;
-        const user = db.prepare('SELECT balance FROM users WHERE id = ?').get(userId) as { balance: number } | undefined;
+        const userResult = await db.query('SELECT balance FROM users WHERE id = $1', [userId]);
+        const user = userResult.rows[0];
 
         if (!user) {
             return NextResponse.json({ error: 'User not found' }, { status: 404 });
@@ -39,48 +40,53 @@ export async function POST(req: Request) {
         const transactionId = uuidv4();
 
         // Use a transaction for atomicity
-        const runTransaction = db.transaction(() => {
+        const client = await db.connect();
+
+        try {
+            await client.query('BEGIN');
+
             // 1. Insert main transaction
-            db.prepare(`
-        INSERT INTO transactions (id, userId, amount, type, description)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(transactionId, userId, amount, type, description);
+            await client.query(`
+                INSERT INTO transactions (id, userId, amount, type, description)
+                VALUES ($1, $2, $3, $4, $5)
+            `, [transactionId, userId, amount, type, description]);
 
             // 2. Update user stats and balance
             if (type === 'DEPOSIT') {
-                db.prepare('UPDATE users SET totalDeposited = totalDeposited + ?, balance = balance + ? WHERE id = ?')
-                    .run(amount, amount, userId);
+                await client.query('UPDATE users SET totalDeposited = totalDeposited + $1, balance = balance + $2 WHERE id = $3',
+                    [amount, amount, userId]);
 
                 // 3. Handle Bonus (20%)
                 const bonusAmount = amount * 0.20;
                 const bonusId = uuidv4();
-                db.prepare(`
-          INSERT INTO transactions (id, userId, amount, type, description)
-          VALUES (?, ?, ?, ?, ?)
-        `).run(bonusId, userId, bonusAmount, 'BONUS', `20% Bonus on deposit of ${amount}`);
+                await client.query(`
+                  INSERT INTO transactions (id, userId, amount, type, description)
+                  VALUES ($1, $2, $3, $4, $5)
+                `, [bonusId, userId, bonusAmount, 'BONUS', `20% Bonus on deposit of ${amount}`]);
 
-                db.prepare('UPDATE users SET balance = balance + ? WHERE id = ?')
-                    .run(bonusAmount, userId);
+                await client.query('UPDATE users SET balance = balance + $1 WHERE id = $2', [bonusAmount, userId]);
 
             } else if (type === 'BET') {
-                db.prepare('UPDATE users SET balance = balance - ?, totalLost = totalLost + ? WHERE id = ?')
-                    .run(amount, amount, userId); // Assuming bet is lost until win? Or just separate Bet vs Win?
-                // Actually, usually Bet decreases balance. Win increases. Net is tracked.
-                // "totalLost" usually aggregates net losses. Here I'll just track total wagered?
-                // User asked "loosing amount should be added". Maybe sum of all BETs that didn't result in WIN?
-                // Simplest: track total bets placed as potential loss.
+                await client.query('UPDATE users SET balance = balance - $1, totalLost = totalLost + $2 WHERE id = $3',
+                    [amount, amount, userId]);
             } else if (type === 'WIN') {
-                db.prepare('UPDATE users SET totalWon = totalWon + ?, balance = balance + ? WHERE id = ?')
-                    .run(amount, amount, userId);
+                await client.query('UPDATE users SET totalWon = totalWon + $1, balance = balance + $2 WHERE id = $3',
+                    [amount, amount, userId]);
             } else if (type === 'WITHDRAWAL') {
-                db.prepare('UPDATE users SET balance = balance - ? WHERE id = ?')
-                    .run(amount, userId);
+                await client.query('UPDATE users SET balance = balance - $1 WHERE id = $2', [amount, userId]);
             }
-        });
 
-        runTransaction();
+            await client.query('COMMIT');
+        } catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        } finally {
+            client.release();
+        }
 
-        const updatedUser = db.prepare('SELECT balance FROM users WHERE id = ?').get(userId) as { balance: number };
+        const updatedUserResult = await db.query('SELECT balance FROM users WHERE id = $1', [userId]);
+        const updatedUser = updatedUserResult.rows[0];
+
         return NextResponse.json({ success: true, balance: updatedUser.balance });
 
     } catch (error) {
@@ -99,14 +105,14 @@ export async function GET(req: Request) {
         const { searchParams } = new URL(req.url);
         const limit = searchParams.get('limit') || 50;
 
-        const transactions = db.prepare(`
+        const result = await db.query(`
       SELECT * FROM transactions 
-      WHERE userId = ? 
+      WHERE userId = $1 
       ORDER BY createdAt DESC 
-      LIMIT ?
-    `).all(session.userId, limit);
+      LIMIT $2
+    `, [session.userId, limit]);
 
-        return NextResponse.json({ transactions });
+        return NextResponse.json({ transactions: result.rows });
     } catch (error) {
         console.error('Get transactions error:', error);
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

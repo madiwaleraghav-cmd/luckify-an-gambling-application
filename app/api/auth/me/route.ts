@@ -9,10 +9,12 @@ export async function GET() {
             return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
         }
 
-        const user = db.prepare(`
+        const result = await db.query(`
       SELECT id, email, balance, totalDeposited, totalWon, totalLost 
-      FROM users WHERE id = ?
-    `).get(session.userId);
+      FROM users WHERE id = $1
+    `, [session.userId]);
+
+        const user = result.rows[0];
 
         if (!user) {
             return NextResponse.json({ error: 'User not found' }, { status: 404 });
