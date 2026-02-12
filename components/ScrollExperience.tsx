@@ -4,6 +4,7 @@ import { useScroll, useTransform, useSpring, motion, AnimatePresence } from "fra
 import { useEffect, useRef, useState } from "react";
 import ScrollCanvas from "./ScrollCanvas";
 import HotMatches from "./HotMatches";
+import MinesPromo from "./MinesPromo";
 
 export default function ScrollExperience() {
     const containerRef = useRef<HTMLDivElement>(null);
@@ -120,6 +121,18 @@ export default function ScrollExperience() {
                         }}
                     >
                         <HotMatches />
+                    </motion.div>
+
+                    {/* Mines Promo - 30-50% */}
+                    <motion.div
+                        className="absolute top-[25%] pointer-events-auto z-20"
+                        style={{
+                            opacity: useTransform(scrollYProgress, [0.3, 0.4, 0.5, 0.6], [0, 1, 1, 0]),
+                            y: useTransform(scrollYProgress, [0.3, 0.4, 0.6], [50, 0, -50]),
+                            scale: useTransform(scrollYProgress, [0.3, 0.4, 0.6], [0.9, 1, 1.1])
+                        }}
+                    >
+                        <MinesPromo />
                     </motion.div>
 
 
