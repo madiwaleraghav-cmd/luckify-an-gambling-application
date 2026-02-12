@@ -1,42 +1,35 @@
-import { NextResponse } from 'next/server';
-import db from '@/lib/db';
-import bcrypt from 'bcryptjs';
-import { signToken } from '@/lib/auth';
-import { cookies } from 'next/headers';
+import { NextResponse } from "next/server";
+import bcrypt from "bcryptjs";
+import db from "@/lib/db";
 
 export async function POST(req: Request) {
-    try {
-        const { email, password } = await req.json();
+  try {
+    const { email, password }: { email: string; password: string } =
+      await req.json();
 
-        if (!email || !password) {
-            return NextResponse.json({ error: 'Email and password are required' }, { status: 400 });
-        }
+    const result = await db.query(
+      "SELECT * FROM users WHERE email = $1",
+      [email]
+    );
 
-        const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as { id: string; email: string; password: string; balance: number } | undefined;
+    const user = result.rows[0];
 
-        if (!user || !(await bcrypt.compare(password, user.password))) {
-            return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
-        }
-
-        const token = await signToken({ userId: user.id, email: user.email });
-        const cookieStore = await cookies();
-        cookieStore.set('token', token, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            maxAge: 60 * 60 * 24, // 1 day
-            path: '/',
-        });
-
-        return NextResponse.json({
-            success: true,
-            user: {
-                id: user.id,
-                email: user.email,
-                balance: user.balance,
-            },
-        });
-    } catch (error) {
-        console.error('Login error:', error);
-        return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      return NextResponse.json(
+        { error: "Invalid credentials" },
+        { status: 401 }
+      );
     }
+
+    return NextResponse.json({
+      message: "Login successful",
+      userId: user.id,
+    });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json(
+      { error: "Server error" },
+      { status: 500 }
+    );
+  }
 }
